@@ -390,6 +390,10 @@ class VantageXmlDbParser():
 
         loads = root.findall(".//Objects//Load[@VID]")
         loads = loads + root.findall(".//Objects//Vantage.DDGColorLoad[@VID]")
+        loads = loads + root.findall(".//Objects//Philips.Philips_Led_Bulb_CHILD[@VID]")
+        loads = loads + root.findall(".//Objects//Legrand.MH_Relay_CHILD[@VID]")
+        loads = loads + root.findall(".//Objects//Legrand.MH_Dimmer_CHILD[@VID]")
+        
         for load_xml in loads:
             output = self._parse_output(load_xml)
             if output is None:
@@ -602,7 +606,11 @@ class VantageXmlDbParser():
 
         """
         try:
+            excluded = False
+            if output_xml.get("ExcludeFromWidgets") is not None and output_xml.get("ExcludeFromWidgets") == "True":
+                excluded = True
             vid = int(output_xml.get('VID'))
+            print("--> {}".format(vid))
             dname_xml = output_xml.find('DName')
             out_name = dname_xml is not None and dname_xml.text
             if out_name:
@@ -616,7 +624,10 @@ class VantageXmlDbParser():
             if lt_xml is not None:
                 load_type = lt_xml.text.strip()
             else:
-                load_type = output_xml.find('ColorType').text.strip()
+                if output_xml.find('ColorType'):
+                    load_type = output_xml.find('ColorType').text.strip()
+                else:
+                    load_type = "Incadescent"
 
             output_type = 'LIGHT'
 
@@ -692,16 +703,26 @@ class VantageXmlDbParser():
                             cc_vid=(load_vid if output_type == 'COLOR'
                                     else self._vid_to_colorvid.get(vid)),
                             dmx_color=dmx_color,
-                            vid=vid)
+                            vid=vid,
+                            excluded=excluded
+                            )
             return output
         except Exception as e:
             _LOGGER.warning("Error parsing Output vid = %d: %s", vid, e)
 
     def _parse_load_group(self, output_xml):
         """Parses a load group, which is a set of loads"""
+
+        excluded = False
+        if output_xml.get("ExcludeFromWidgets") is not None and output_xml.get("ExcludeFromWidgets") == "True":
+            excluded = True
+
+        dname_xml = output_xml.find('DName')
         out_name = output_xml.find('DName').text
         if out_name:
             out_name = out_name.strip()
+        if not out_name and output_xml.get("DName") is not None:
+            out_name = output_xml.get("DName").strip()
         if not out_name or out_name.isspace():
             out_name = output_xml.find('Name').text
         else:
@@ -739,7 +760,8 @@ class VantageXmlDbParser():
                            color_vids=color_vids,
                            dmx_color=dmx_color,
                            support_color_temp=support_color_temp,
-                           vid=vid)
+                           vid=vid,
+                           excluded=excluded)
         return output
 
     def _parse_keypad(self, keypad_xml):
@@ -1501,13 +1523,15 @@ class Output(VantageEntity):
     _wait_seconds = 0.03  # TODO:move this to a parameter
 
     def __init__(self, vantage, name, area, output_type, load_type,
-                 cc_vid, dmx_color, vid):
+                 cc_vid, dmx_color, vid, excluded=False):
         """Initializes the Output."""
         super(Output, self).__init__(vantage, name, area, vid)
+        self._basename = self._name
         self._output_type = output_type
         self._load_type = load_type
         self._extra_info['load_type'] = load_type
         self._level = 0.0
+        self._excluded = excluded
         self._color_temp = 2700
         self._is_dimmable = (self._output_type == 'LIGHT' and
                              self._load_type.lower().find("non-dim") == -1)
@@ -1903,10 +1927,12 @@ class Button(VantageSensor):
 class LoadGroup(Output):
     """Represent a Vantage LoadGroup."""
     def __init__(self, vantage, name, area, load_vids, color_vids,
-                 dmx_color, support_color_temp, vid):
+                 dmx_color, support_color_temp, vid, excluded=False):
         """Initialize a load group"""
+        self._basename = name
         super(LoadGroup, self).__init__(
             vantage, name, area, 'GROUP', 'GROUP', None, dmx_color, vid)
+        self._excluded = excluded
         self._load_vids = load_vids
         self._color_vids = color_vids
         self._support_color_temp = support_color_temp
